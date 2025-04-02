@@ -1,3 +1,18 @@
+import json
+import os
+import re
+import sqlite3
+import tempfile
+from tqdm import tqdm
+import logging
+
+import pandas as pd
+import sqlparse
+import torch
+from datasets import load_dataset
+from unsloth import FastLanguageModel, is_bfloat16_supported
+from trl import GRPOConfig, GRPOTrainer
+from transformers import TrainerCallback
 from sql_reward_utils import (
     soft_format_reward_func,
     strict_format_reward_func,
@@ -6,24 +21,6 @@ from sql_reward_utils import (
     reasoning_quality_reward,
     REWARD_WEIGHTS
 )
-from transformers import TrainerCallback
-from trl import GRPOConfig, GRPOTrainer
-from unsloth import FastLanguageModel, is_bfloat16_supported
-from datasets import load_dataset
-import torch
-import sqlparse
-import pandas as pd
-import logging
-from tqdm import tqdm
-import tempfile
-import sqlite3
-import re
-import os
-import json
-Here's the code with all comments removed:
-
-```python
-
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
