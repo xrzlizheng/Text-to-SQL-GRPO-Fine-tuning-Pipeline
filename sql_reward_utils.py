@@ -434,7 +434,8 @@ def fix_ambiguous_columns(sql: str, conn: Optional[sqlite3.Connection] = None) -
 
     try:
         parsed_exp = parse(sql, read="sqlite")
-        common_ambiguous = {'id', 'name', 'date', 'code'}
+        common_ambiguous = {'id', 'name', 'date', 'code', 'created_at', 'updated_at',
+                            'description', 'status', 'type', 'price', 'quantity', 'amount'}
         first_table_alias = None
 
         if isinstance(parsed_exp, list):
