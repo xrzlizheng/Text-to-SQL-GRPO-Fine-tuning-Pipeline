@@ -182,7 +182,7 @@ try:
             "gate_proj", "up_proj", "down_proj",
         ],
         lora_alpha=LORA_RANK,
-        lora_dropout=0.05,
+        lora_dropout=0.05,  # 0.1
         bias="none",
         use_gradient_checkpointing="unsloth",
         random_state=3407,

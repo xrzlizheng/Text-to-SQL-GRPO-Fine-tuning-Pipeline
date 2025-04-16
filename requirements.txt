@@ -1,0 +1,9 @@
+unsloth
+vllm
+sqlparse
+wandb
+sqlglot
+datasets
+tqdm
+openai
+pandas

@@ -1,4 +1,4 @@
-# Text-to-SQL GRPO Training Pipeline
+# Text-to-SQL GRPO Fine-tuning Pipeline
 
 This repository contains a pipeline for fine-tuning Large Language Models (LLMs) for Text-to-SQL conversion using General Reward Proximal Optimization (GRPO). The implementation focuses on Qwen2.5-Coder models but can be adapted for other LLMs.
 
