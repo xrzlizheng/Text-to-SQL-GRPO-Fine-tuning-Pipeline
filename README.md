@@ -1,95 +1,95 @@
-# Text-to-SQL GRPO Fine-tuning Pipeline
+# Text-to-SQL GRPO 微调流程
+欢迎关注我的博客https://blog.csdn.net/qq_36603091/article/details/147732147
+本仓库包含使用通用奖励近端优化（GRPO）对大型语言模型（LLMs）进行 Text-to-SQL 转换微调的流程。该实现主要针对 Qwen2.5-Coder 模型，但也可适用于其他 LLMs。
 
-This repository contains a pipeline for fine-tuning Large Language Models (LLMs) for Text-to-SQL conversion using General Reward Proximal Optimization (GRPO). The implementation focuses on Qwen2.5-Coder models but can be adapted for other LLMs.
+## 概述
 
-## Overview
+Text-to-SQL 是将自然语言问题转换为 SQL 查询的任务。本项目使用 GRPO 进行模型微调，优化以下方面：
+- SQL 正确性
+- 清晰的推理过程
+- 适当的格式
+- 查询复杂度匹配
 
-Text-to-SQL is the task of converting natural language questions into SQL queries. This project uses GRPO to fine-tune models, optimizing for:
-- SQL correctness
-- Clear reasoning
-- Proper formatting
-- Query complexity alignment
+## 主要特点
 
-## Key Features
+- **GRPO 微调**：使用多个奖励函数优化模型
+- **评估**：使用标准查询和 GPT-4o-mini 的综合评估框架
+- **SQL 奖励函数**：用于 SQL 质量评估的多个奖励指标
+- **对比学习**：改进 SQL 生成的自然语言理解能力
 
-- **GRPO Fine-tuning**: Optimize models with multiple reward functions
-- **Evaluation**: Comprehensive evaluation framework using gold queries and GPT-4o-mini
-- **SQL Reward Functions**: Multiple reward metrics for SQL quality assessment
-- **Contrastive Learning**: Improve natural language understanding for SQL generation
+## 项目结构
 
-## Project Structure
+- `llm_train.py`：GRPO 微调的主要训练脚本
+- `sql_reward_utils.py`：SQL 执行和奖励函数
+- `eval_grpo.py`：微调模型的评估
+- `requirements.txt`：所需依赖项
 
-- `llm_train.py`: Main training script for GRPO fine-tuning
-- `sql_reward_utils.py`: SQL execution and reward functions
-- `eval_grpo.py`: Evaluation of fine-tuned models
-- `requirements.txt`: Required dependencies
-
-## Installation
+## 安装
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Data Preparation
+## 数据准备
 
-1. Clean the dataset:
+1. 清理数据集：
 ```bash
 python cleanse_dataset.py
 ```
 
-This script filters the dataset to ensure:
-- Valid SQL queries
-- Correctly matched schema contexts
-- Executable queries with proper syntax
+该脚本过滤数据集以确保：
+- 有效的 SQL 查询
+- 正确匹配的数据库模式上下文
+- 具有正确语法的可执行查询
 
-## Training
+## 训练
 
-Run the GRPO training:
+运行 GRPO 训练：
 
 ```bash
 python llm_train.py
 ```
 
-Key parameters (can be modified in the script):
-- `MODEL_NAME`: Base model to fine-tune (default: "Qwen/Qwen2.5-Coder-7B-Instruct")
-- `MAX_SEQ_LENGTH`: Maximum sequence length (default: 1024)
-- `LORA_RANK`: LoRA rank for parameter-efficient fine-tuning (default: 32)
-- `BATCH_SIZE`: Training batch size (default: 4)
-- `NUM_GENERATIONS`: Number of generations per prompt for GRPO (default: 8)
-- `MAX_STEPS`: Maximum training steps (default: 225)
+关键参数（可在脚本中修改）：
+- `MODEL_NAME`：要微调的基础模型（默认："Qwen/Qwen2.5-Coder-7B-Instruct"）
+- `MAX_SEQ_LENGTH`：最大序列长度（默认：1024）
+- `LORA_RANK`：参数高效微调的 LoRA 秩（默认：32）
+- `BATCH_SIZE`：训练批次大小（默认：4）
+- `NUM_GENERATIONS`：每个提示的 GRPO 生成数量（默认：8）
+- `MAX_STEPS`：最大训练步数（默认：225）
 
-## Evaluation
+## 评估
 
-Evaluate your trained model:
+评估您的训练模型：
 
 ```bash
 python eval_grpo.py
 ```
 
-This script:
-1. Loads your fine-tuned model
-2. Generates SQL queries from test prompts
-3. Evaluates the outputs using GPT-4o-mini
-4. Produces detailed metrics and error analysis
-5. Saves results as JSON and CSV
+该脚本：
+1. 加载您的微调模型
+2. 从测试提示生成 SQL 查询
+3. 使用 GPT-4o-mini 评估输出
+4. 生成详细的指标和错误分析
+5. 将结果保存为 JSON 和 CSV 格式
 
-## Reward Functions
+## 奖励函数
 
-The training uses multiple reward components:
+训练使用多个奖励组件：
 
-- **Format Reward**: Ensures proper XML tag structure
-- **SQL Correctness**: Tests executable accuracy against gold standard
-- **Complexity Reward**: Matches complexity between generated and gold queries
-- **Reasoning Quality**: Assesses explanation quality and schema references
+- **格式奖励**：确保正确的 XML 标签结构
+- **SQL 正确性**：与标准查询比较可执行准确性
+- **复杂度奖励**：匹配生成查询和标准查询之间的复杂度
+- **推理质量**：评估解释质量和数据库模式引用
 
-## Model Outputs
+## 模型输出
 
-The model is trained to output in the following format:
+模型被训练为以下格式输出：
 
 ```
 <reasoning>
-This database has a users table with columns for id, name, and age.
-The question asks for all users over 30, so I need to query the users table with a WHERE condition.
+这个数据库有一个包含 id、name 和 age 列的 users 表。
+问题要求查询所有 30 岁以上的用户，所以我需要使用 WHERE 条件查询 users 表。
 </reasoning>
 <sql>
 SELECT * FROM users WHERE age > 30;

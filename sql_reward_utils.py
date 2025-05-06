@@ -1,3 +1,15 @@
+"""
+SQL奖励函数工具库
+用于评估和计算Text-to-SQL模型生成的SQL查询的质量
+主要功能包括：
+1. SQL查询格式验证
+2. SQL正确性检查
+3. 查询复杂度评估
+4. 推理质量评估
+5. 数据库模式验证
+"""
+
+# 导入必要的库
 import re
 import os
 import tempfile
@@ -10,6 +22,7 @@ from sqlglot import parse, transpile, ParseError
 from sqlglot.expressions import Column, Table
 from typing import List, Dict, Tuple, Any, Optional, Set, Union
 
+# 配置日志级别
 log_level = logging.DEBUG if os.environ.get(
     "SQL_DEBUG_MODE") == "1" else logging.CRITICAL + 1
 logging.basicConfig(
@@ -18,31 +31,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 奖励函数权重配置
 REWARD_WEIGHTS = {
-    "format": 1.0,
-    "sql_correctness": 1.2,
-    "complexity": 0.6,
-    "reasoning": 0.7,
+    "format": 1.0,              # 格式奖励权重
+    "sql_correctness": 1.2,     # SQL正确性奖励权重
+    "complexity": 0.6,          # 复杂度奖励权重
+    "reasoning": 0.7,           # 推理质量奖励权重
 }
 
+# 调试模式配置
 DEBUG_MODE = os.environ.get("SQL_DEBUG_MODE") == "1"
 
-ERR_SYNTAX = "syntax_error"
-ERR_MISSING_TABLE = "missing_table"
-ERR_MISSING_COLUMN = "missing_column"
-ERR_AMBIGUOUS_COLUMN = "ambiguous_column"
-ERR_TYPE_MISMATCH = "type_mismatch"
-ERR_CONSTRAINT = "constraint_violation"
-ERR_FUNCTION = "function_error"
-ERR_RESOURCE = "resource_error"
-ERR_OTHER = "other_error"
-ERR_SCHEMA_SETUP = "schema_setup_error"
-ERR_CONVERSION = "sql_conversion_error"
-ERR_EXECUTION = "sql_execution_error"
-ERR_SCHEMA_VALIDATION = "schema_validation_error"
+# SQL错误类型常量
+ERR_SYNTAX = "syntax_error"                 # 语法错误
+ERR_MISSING_TABLE = "missing_table"         # 缺少表
+ERR_MISSING_COLUMN = "missing_column"       # 缺少列
+ERR_AMBIGUOUS_COLUMN = "ambiguous_column"   # 列名歧义
+ERR_TYPE_MISMATCH = "type_mismatch"         # 类型不匹配
+ERR_CONSTRAINT = "constraint_violation"     # 约束违反
+ERR_FUNCTION = "function_error"             # 函数错误
+ERR_RESOURCE = "resource_error"             # 资源错误
+ERR_OTHER = "other_error"                   # 其他错误
+ERR_SCHEMA_SETUP = "schema_setup_error"     # 模式设置错误
+ERR_CONVERSION = "sql_conversion_error"     # SQL转换错误
+ERR_EXECUTION = "sql_execution_error"       # SQL执行错误
+ERR_SCHEMA_VALIDATION = "schema_validation_error"  # 模式验证错误
 
 
 def _get_response_text(completion: Any) -> str:
+    """
+    从完成结果中提取响应文本
+    
+    参数:
+        completion: 完成结果，可以是字符串、列表或字典
+        
+    返回:
+        str: 提取的响应文本
+    """
     response_text = ""
     if isinstance(completion, str):
         response_text = completion
@@ -66,16 +91,28 @@ def _get_response_text(completion: Any) -> str:
 
 
 def extract_sql(text: str) -> str:
+    """
+    从文本中提取SQL查询语句
+    
+    参数:
+        text (str): 包含SQL查询的文本
+        
+    返回:
+        str: 提取出的SQL查询语句
+    """
     if not text:
         return ""
+    # 首先尝试从<sql>标签中提取
     match = re.search(r"<sql>(.*?)</sql>", text, re.IGNORECASE | re.DOTALL)
     if match:
         sql = match.group(1).strip()
+        # 移除注释
         sql = re.sub(r"^\s*--.*?\n", "", sql, flags=re.MULTILINE)
         sql = re.sub(r"\n--.*?\s*$", "", sql, flags=re.MULTILINE)
         sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
         return sql.strip()
     else:
+        # 如果没有找到<sql>标签，尝试查找SQL关键字
         sql_keywords = ["SELECT ", "INSERT ", "UPDATE ",
                         "DELETE ", "CREATE ", "ALTER ", "DROP ", "WITH "]
         text_upper = text.upper()
@@ -98,6 +135,15 @@ def extract_sql(text: str) -> str:
 
 
 def extract_reasoning(text: str) -> str:
+    """
+    从文本中提取推理部分
+    
+    参数:
+        text (str): 包含推理的文本
+        
+    返回:
+        str: 提取出的推理文本
+    """
     if not text:
         return ""
     match = re.search(r"<reasoning>(.*?)</reasoning>",
@@ -106,41 +152,53 @@ def extract_reasoning(text: str) -> str:
 
 
 def calculate_sql_complexity(sql: str) -> float:
+    """
+    计算SQL查询的复杂度分数
+    
+    参数:
+        sql (str): SQL查询语句
+        
+    返回:
+        float: 复杂度分数
+    """
     if not sql:
         return 0.0
     try:
         sql_upper = sql.upper()
         score = 1.0
-        score += sql_upper.count(" JOIN ") * 0.6
+        # 根据SQL特性计算复杂度
+        score += sql_upper.count(" JOIN ") * 0.6                # 连接操作
         score += sql_upper.count(" UNION ") * 0.8 + sql_upper.count(
-            " INTERSECT ") * 0.8 + sql_upper.count(" EXCEPT ") * 0.8
-        score += sql_upper.count("(SELECT") * 1.0
-        score += sql_upper.count(" WITH ") * 0.8
+            " INTERSECT ") * 0.8 + sql_upper.count(" EXCEPT ") * 0.8  # 集合操作
+        score += sql_upper.count("(SELECT") * 1.0              # 子查询
+        score += sql_upper.count(" WITH ") * 0.8               # CTE
         if " WHERE " in sql_upper:
-            score += 0.2
+            score += 0.2                                       # WHERE子句
         if " GROUP BY " in sql_upper:
-            score += 0.5
+            score += 0.5                                       # 分组
         if " HAVING " in sql_upper:
-            score += 0.7
+            score += 0.7                                       # HAVING子句
         if " ORDER BY " in sql_upper:
-            score += 0.3
+            score += 0.3                                       # 排序
         if " LIMIT " in sql_upper:
-            score += 0.1
+            score += 0.1                                       # 限制
+        # 聚合函数
         agg_functions = ["COUNT(", "SUM(", "AVG(", "MAX(", "MIN("]
         score += sum(sql_upper.count(agg) for agg in agg_functions) * 0.3
-        score += sql_upper.count(" DISTINCT ") * 0.3
-        score += sql_upper.count(" CASE ") * 0.4
-        score += sql_upper.count(" OVER(") * 1.0
+        score += sql_upper.count(" DISTINCT ") * 0.3           # 去重
+        score += sql_upper.count(" CASE ") * 0.4               # CASE语句
+        score += sql_upper.count(" OVER(") * 1.0               # 窗口函数
+        # WHERE子句的复杂度
         where_match = re.search(
             r" WHERE (.*?)(?: GROUP BY | ORDER BY | LIMIT | OFFSET |$)", sql_upper, re.DOTALL)
         if where_match:
             where_clause = where_match.group(1)
             score += where_clause.count(" AND ") * \
-                0.15 + where_clause.count(" OR ") * 0.20
+                0.15 + where_clause.count(" OR ") * 0.20       # 逻辑运算符
             score += where_clause.count(" IN ") * \
-                0.2 + where_clause.count(" LIKE ") * 0.1
+                0.2 + where_clause.count(" LIKE ") * 0.1       # 比较运算符
             score += where_clause.count(" BETWEEN ") * \
-                0.2 + where_clause.count(" EXISTS ") * 0.3
+                0.2 + where_clause.count(" EXISTS ") * 0.3     # 范围查询和存在性检查
         return max(0.0, score)
     except Exception as e:
         logger.warning(
@@ -149,14 +207,25 @@ def calculate_sql_complexity(sql: str) -> float:
 
 
 def identify_sql_statement_type(sql: str) -> str:
+    """
+    识别SQL语句的类型
+    
+    参数:
+        sql (str): SQL语句
+        
+    返回:
+        str: SQL语句类型
+    """
     if not sql:
         return "UNKNOWN"
+    # 清理SQL语句中的注释
     clean_sql = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE).strip()
     clean_sql = re.sub(r'/\*.*?\*/', '', clean_sql, flags=re.DOTALL).strip()
     if not clean_sql:
         return "UNKNOWN"
     first_word = clean_sql.split(None, 1)[0].upper()
 
+    # 根据第一个关键字判断SQL类型
     if first_word == "SELECT":
         return "SELECT"
     if first_word == "INSERT":
@@ -190,6 +259,15 @@ def identify_sql_statement_type(sql: str) -> str:
 
 
 def list_all_tables(conn: sqlite3.Connection) -> List[str]:
+    """
+    列出数据库中的所有表和视图
+    
+    参数:
+        conn (sqlite3.Connection): 数据库连接
+        
+    返回:
+        List[str]: 表和视图名称列表
+    """
     try:
         cursor = conn.cursor()
         cursor.execute(
@@ -429,15 +507,27 @@ def fix_case_sensitivity_in_sql(conn: sqlite3.Connection, sql: str) -> str:
 
 
 def fix_ambiguous_columns(sql: str, conn: Optional[sqlite3.Connection] = None) -> str:
+    """
+    修复SQL查询中的歧义列名
+    
+    参数:
+        sql (str): 原始SQL查询
+        conn (Optional[sqlite3.Connection]): 数据库连接（可选）
+        
+    返回:
+        str: 修复后的SQL查询
+    """
     if " JOIN " not in sql.upper():
         return sql
 
     try:
         parsed_exp = parse(sql, read="sqlite")
+        # 常见的容易产生歧义的列名
         common_ambiguous = {'id', 'name', 'date', 'code', 'created_at', 'updated_at',
                             'description', 'status', 'type', 'price', 'quantity', 'amount'}
         first_table_alias = None
 
+        # 解析SQL中的表
         if isinstance(parsed_exp, list):
             tables = []
             for expr in parsed_exp:
@@ -458,6 +548,7 @@ def fix_ambiguous_columns(sql: str, conn: Optional[sqlite3.Connection] = None) -
         fixed_sql = sql
         modified = False
 
+        # 查找所有列引用
         if isinstance(parsed_exp, list):
             all_col_refs = []
             for expr in parsed_exp:
@@ -466,6 +557,7 @@ def fix_ambiguous_columns(sql: str, conn: Optional[sqlite3.Connection] = None) -
         else:
             all_col_refs = parsed_exp.find_all(Column)
 
+        # 修复歧义列名
         for col_exp in all_col_refs:
             if not col_exp.table and col_exp.name.lower() in common_ambiguous:
                 logger.debug(
@@ -494,12 +586,22 @@ def fix_ambiguous_columns(sql: str, conn: Optional[sqlite3.Connection] = None) -
 
 
 def categorize_sql_error(error_msg: str) -> Tuple[str, float]:
+    """
+    对SQL错误进行分类并返回相应的错误类型和惩罚分数
+    
+    参数:
+        error_msg (str): SQL错误消息
+        
+    返回:
+        Tuple[str, float]: (错误类型, 惩罚分数)
+    """
     if not error_msg:
         return ERR_OTHER, 0.0
     error_lower = error_msg.lower()
     if DEBUG_MODE:
         logger.debug(f"Categorizing SQL error: {error_msg}")
 
+    # 根据错误消息内容进行分类
     if "syntax error" in error_lower:
         return ERR_SYNTAX, 0.0
     if "no such table" in error_lower:
@@ -523,6 +625,18 @@ def categorize_sql_error(error_msg: str) -> Tuple[str, float]:
 
 
 def strict_format_reward_func(prompts, completions, references=None, **kwargs) -> list[float]:
+    """
+    严格的格式奖励函数，检查输出是否严格遵循<reasoning>和<sql>标签格式
+    
+    参数:
+        prompts: 输入提示
+        completions: 模型输出
+        references: 参考输出（可选）
+        **kwargs: 其他参数
+        
+    返回:
+        list[float]: 每个输出的奖励分数列表
+    """
     strict_pattern = r"<reasoning>(.+?)</reasoning>\s*<sql>(.+?)</sql>"
     base_reward = REWARD_WEIGHTS.get("format", 1.0)
     rewards = []
@@ -535,6 +649,18 @@ def strict_format_reward_func(prompts, completions, references=None, **kwargs) -
 
 
 def soft_format_reward_func(prompts, completions, references=None, **kwargs) -> list[float]:
+    """
+    宽松的格式奖励函数，检查输出是否包含<reasoning>和<sql>标签
+    
+    参数:
+        prompts: 输入提示
+        completions: 模型输出
+        references: 参考输出（可选）
+        **kwargs: 其他参数
+        
+    返回:
+        list[float]: 每个输出的奖励分数列表
+    """
     soft_pattern = r"<reasoning>(.*?)</reasoning>\s*<sql>(.*?)</sql>"
     base_reward = REWARD_WEIGHTS.get("format", 1.0)
     rewards = []
@@ -547,11 +673,21 @@ def soft_format_reward_func(prompts, completions, references=None, **kwargs) -> 
 
 
 def extract_tables_columns(sql_context: str) -> tuple[set[str], set[str]]:
+    """
+    从SQL上下文中提取表和列名
+    
+    参数:
+        sql_context (str): SQL上下文字符串
+        
+    返回:
+        tuple[set[str], set[str]]: (表名集合, 列名集合)
+    """
     tables = set()
     columns = set()
     if not sql_context:
         return tables, columns
 
+    # 定义正则表达式模式
     create_table_pattern = r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`\"\[]?(\w+)[`\"\]]?)\s*\((.*?)\);"
     create_view_pattern = r"CREATE\s+VIEW\s+(?:[`\"\[]?(\w+)[`\"\]]?)\s+AS"
     column_pattern = r"^\s*([`\"\[]?\w+[`\"\]]?)"
@@ -560,16 +696,19 @@ def extract_tables_columns(sql_context: str) -> tuple[set[str], set[str]]:
         statements = sqlparse.split(sql_context)
         for stmt in statements:
             stmt_clean = stmt.strip()
+            # 匹配CREATE TABLE语句
             table_match = re.search(
                 create_table_pattern, stmt_clean, re.IGNORECASE | re.DOTALL | re.MULTILINE)
             if table_match:
                 table_name = table_match.group(1).lower()
                 tables.add(table_name)
                 cols_text = table_match.group(2)
+                # 提取列名
                 for part in re.split(r',(?![^\(]*\))', cols_text):
                     col_match = re.match(column_pattern, part.strip())
                     if col_match:
                         columns.add(col_match.group(1).strip('`"[]').lower())
+            # 匹配CREATE VIEW语句
             view_match = re.search(create_view_pattern,
                                    stmt_clean, re.IGNORECASE)
             if view_match:
@@ -583,6 +722,18 @@ def extract_tables_columns(sql_context: str) -> tuple[set[str], set[str]]:
 
 
 def reasoning_quality_reward(prompts, completions, references=None, **kwargs) -> list[float]:
+    """
+    评估推理质量的奖励函数
+    
+    参数:
+        prompts: 输入提示
+        completions: 模型输出
+        references: 参考输出（可选）
+        **kwargs: 其他参数
+        
+    返回:
+        list[float]: 每个输出的奖励分数列表
+    """
     rewards = []
     schema_cache = {}
 
@@ -599,6 +750,7 @@ def reasoning_quality_reward(prompts, completions, references=None, **kwargs) ->
         words = reasoning.split()
         lines = [line for line in reasoning.split("\n") if line.strip()]
 
+        # 计算长度分数
         len_score = 0.0
         if len(words) >= 50:
             len_score = 0.20
@@ -608,12 +760,14 @@ def reasoning_quality_reward(prompts, completions, references=None, **kwargs) ->
             len_score = 0.10
         reward_components['length'] = len_score
 
+        # 计算SQL术语使用分数
         sql_terms = ["table", "column", "join", "select", "where",
                      "group by", "order by", "filter", "aggregate", "schema", "database"]
         term_count = sum(1 for term in sql_terms if term in reasoning_lower)
         term_score = min(0.20, term_count * 0.03)
         reward_components['terms'] = term_score
 
+        # 计算结构分数
         structure_score = 0.0
         if len(lines) >= 3:
             structure_score = 0.15
@@ -621,12 +775,14 @@ def reasoning_quality_reward(prompts, completions, references=None, **kwargs) ->
             structure_score = 0.10
         reward_components['structure'] = structure_score
 
+        # 计算步骤分数
         step_score = 0.0
         if re.search(r'(step 1|first|start|initial|begin)', reasoning_lower) and \
            re.search(r'(step 2|next|then|second|final|last|subsequent)', reasoning_lower):
             step_score = 0.15
         reward_components['steps'] = step_score
 
+        # 计算模式引用分数
         schema_mention_score = 0.0
         sql_context = None
         try:
@@ -650,6 +806,7 @@ def reasoning_quality_reward(prompts, completions, references=None, **kwargs) ->
                 schema_mention_score = min(0.30, total_mentions * 0.05)
         reward_components['schema'] = schema_mention_score
 
+        # 计算最终奖励分数
         total_unscaled_reward = sum(reward_components.values())
         final_reward = min(1.0, total_unscaled_reward) * \
             REWARD_WEIGHTS.get("reasoning", 0.7)
@@ -662,6 +819,18 @@ def reasoning_quality_reward(prompts, completions, references=None, **kwargs) ->
 
 
 def complexity_reward(prompts, completions, references, **kwargs) -> list[float]:
+    """
+    评估SQL查询复杂度的奖励函数
+    
+    参数:
+        prompts: 输入提示
+        completions: 模型输出
+        references: 参考输出
+        **kwargs: 其他参数
+        
+    返回:
+        list[float]: 每个输出的奖励分数列表
+    """
     rewards = []
     base_weight = REWARD_WEIGHTS.get("complexity", 0.6)
 
@@ -670,6 +839,7 @@ def complexity_reward(prompts, completions, references, **kwargs) -> list[float]
         gen_sql = extract_sql(response_text)
         reward = 0.0
 
+        # 获取参考SQL
         gold_sql = ""
         try:
             if references and i < len(references) and references[i] and isinstance(references[i], list) and references[i][0]:
@@ -682,15 +852,18 @@ def complexity_reward(prompts, completions, references, **kwargs) -> list[float]
             continue
 
         try:
+            # 计算生成的SQL复杂度
             gen_complexity = calculate_sql_complexity(gen_sql)
 
             if not gold_sql:
+                # 如果没有参考SQL，根据复杂度范围给予奖励
                 reward = (0.4 if 1.5 <= gen_complexity <=
                           8.0 else 0.1) * base_weight
                 if DEBUG_MODE:
                     logger.debug(
                         f"Complexity (Comp {i}): No Gold SQL. Gen={gen_complexity:.2f}. Reward={reward:.3f}")
             else:
+                # 如果有参考SQL，比较复杂度
                 gold_complexity = calculate_sql_complexity(gold_sql)
                 if gold_complexity < 0.1:
                     rel_score = 1.0 if gen_complexity < 0.1 else 0.0
@@ -708,12 +881,21 @@ def complexity_reward(prompts, completions, references, **kwargs) -> list[float]
 
         except Exception as e:
             logger.warning(f"Error in complexity reward calculation: {e}")
-            rewards.append(0.0)
+            rewards.append(reward)
 
     return rewards
 
 
 def dump_database_schema(conn):
+    """
+    导出数据库模式信息
+    
+    参数:
+        conn: 数据库连接
+        
+    返回:
+        dict: 包含表结构、列信息和索引的字典
+    """
     try:
         cursor = conn.cursor()
         tables = list_all_tables(conn)
@@ -721,6 +903,7 @@ def dump_database_schema(conn):
         schema_info = {}
 
         for table in tables:
+            # 获取表的列信息
             cursor.execute(f"PRAGMA table_info({table})")
             columns = cursor.fetchall()
 
@@ -738,6 +921,7 @@ def dump_database_schema(conn):
 
             schema_info[table] = column_info
 
+            # 获取表的索引信息
             cursor.execute(f"PRAGMA index_list({table})")
             indexes = cursor.fetchall()
             if indexes:
@@ -757,12 +941,25 @@ def dump_database_schema(conn):
 
 
 def execute_query_reward_func(prompts, completions, references, **kwargs) -> list[float]:
+    """
+    执行查询并计算奖励分数的函数
+    
+    参数:
+        prompts: 输入提示
+        completions: 模型输出
+        references: 参考输出
+        **kwargs: 其他参数
+        
+    返回:
+        list[float]: 每个输出的奖励分数列表
+    """
     rewards = []
 
     for i, completion in enumerate(completions):
         response_text = _get_response_text(completion)
         gen_sql = extract_sql(response_text)
 
+        # 获取参考SQL和上下文
         gold_sql = ""
         sql_context = ""
         try:
@@ -780,12 +977,14 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
 
         reward = 0.0
 
+        # 检查必要的SQL数据是否存在
         if not gen_sql or not gold_sql or not sql_context:
             logger.warning(
                 f"Missing SQL data for completion {i}: gen_sql={bool(gen_sql)}, gold_sql={bool(gold_sql)}, sql_context={bool(sql_context)}")
             rewards.append(reward)
             continue
 
+        # 比较SQL语句类型
         gold_type = identify_sql_statement_type(gold_sql)
         gen_type = identify_sql_statement_type(gen_sql)
 
@@ -796,6 +995,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
             logger.debug(f"Gold SQL type: {gold_type}")
             logger.debug(f"Generated SQL type: {gen_type}")
 
+        # 创建临时数据库并执行查询
         conn = None
         temp_db_file = None
         try:
@@ -804,6 +1004,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
             conn.isolation_level = None
             cursor = conn.cursor()
 
+            # 分类SQL语句
             create_table_statements = []
             create_view_statements = []
             other_statements = []
@@ -826,14 +1027,17 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                              f"{len(create_view_statements)} CREATE VIEW statements, and "
                              f"{len(other_statements)} other statements")
 
+            # 创建表
             tables_created = []
             for stmt in create_table_statements:
                 try:
+                    # 提取表名
                     table_match = re.search(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)',
                                             stmt, re.IGNORECASE)
                     table_name = table_match.group(1).strip(
                         '`"[]') if table_match else "unknown"
 
+                    # 转换并执行CREATE TABLE语句
                     converted_stmt = convert_sql_to_sqlite(stmt)
 
                     if DEBUG_MODE:
@@ -843,6 +1047,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                     cursor.execute(converted_stmt)
                     tables_created.append(table_name)
 
+                    # 验证表是否成功创建
                     exists_exact, exists_case_insensitive, correct_case = check_table_exists(
                         conn, table_name)
                     if exists_exact:
@@ -863,14 +1068,17 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                     logger.warning(f"Converted statement: {converted_stmt[:200]}..." if 'converted_stmt' in locals(
                     ) else "conversion failed")
 
+            # 创建视图
             views_created = []
             for stmt in create_view_statements:
                 try:
+                    # 提取视图名
                     view_match = re.search(
                         r'CREATE\s+VIEW\s+([^\s(]+)', stmt, re.IGNORECASE)
                     view_name = view_match.group(1).strip(
                         '`"[]') if view_match else "unknown"
 
+                    # 转换并执行CREATE VIEW语句
                     converted_stmt = convert_sql_to_sqlite(stmt)
 
                     if DEBUG_MODE:
@@ -880,6 +1088,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                     cursor.execute(converted_stmt)
                     views_created.append(view_name)
 
+                    # 验证视图是否成功创建
                     exists_exact, exists_case_insensitive, correct_case = check_table_exists(
                         conn, view_name)
                     if exists_exact:
@@ -898,6 +1107,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                     logger.warning(f"Converted statement: {converted_stmt[:200]}..." if 'converted_stmt' in locals(
                     ) else "conversion failed")
 
+            # 执行其他SQL语句（如INSERT等）
             for stmt in other_statements:
                 try:
                     is_insert_like = stmt.upper().startswith(
@@ -914,6 +1124,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                     logger.warning(f"Error in non-CREATE statement: {e}")
                     logger.warning(f"Statement causing error: {stmt[:200]}...")
 
+            # 调试输出数据库模式信息
             if DEBUG_MODE:
                 schema_info = dump_database_schema(conn)
                 logger.debug(f"Database schema after setup: {schema_info}")
@@ -921,11 +1132,13 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                 all_tables = list_all_tables(conn)
                 logger.debug(f"All tables in database: {all_tables}")
 
+            # 检查生成的SQL中引用的表
             referenced_tables = extract_tables_from_query(gen_sql)
             if DEBUG_MODE:
                 logger.debug(
                     f"Tables referenced in generated query: {referenced_tables}")
 
+                # 验证每个引用的表是否存在
                 for table in referenced_tables:
                     exists_exact, exists_case_insensitive, correct_case = check_table_exists(
                         conn, table)
@@ -939,6 +1152,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                         logger.debug(
                             f"Table '{table}' does not exist in any case form")
 
+            # 检查表名大小写匹配问题
             existing_tables = list_all_tables(conn)
             existing_tables_lower = [t.lower() for t in existing_tables]
             missing_tables = [table for table in referenced_tables if table.lower(
@@ -950,6 +1164,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                 logger.warning(
                     f"Case-mismatch in table references: {case_mismatch_tables}")
 
+                # 修复表名大小写
                 case_mapping = {t.lower(): t for t in existing_tables}
 
                 for wrong_case in case_mismatch_tables:
@@ -969,8 +1184,10 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                 logger.warning(
                     f"Tables genuinely missing (not just case mismatch): {missing_tables}")
 
+            # 对SELECT语句进行特殊处理
             if gold_type == "SELECT" and gen_type == "SELECT":
                 try:
+                    # 修复列名歧义
                     fixed_gen_sql = fix_ambiguous_columns(gen_sql)
 
                     if fixed_gen_sql != gen_sql:
@@ -980,6 +1197,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                         logger.debug(f"Fixed SQL: {fixed_gen_sql[:200]}...")
                         gen_sql = fixed_gen_sql
 
+                    # 执行参考SQL查询
                     converted_gold_sql = convert_sql_to_sqlite(gold_sql)
                     logger.debug(
                         f"Executing gold SQL: {converted_gold_sql[:200]}...")
@@ -995,6 +1213,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                         logger.debug(
                             f"First row of gold result: {gold_result[0]}")
 
+                    # 修复生成的SQL中的大小写敏感性问题
                     gen_sql_fixed = fix_case_sensitivity_in_sql(conn, gen_sql)
 
                     if gen_sql_fixed != gen_sql:
@@ -1002,6 +1221,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                             f"Fixed case sensitivity issues in generated SQL")
                         gen_sql = gen_sql_fixed
 
+                    # 执行生成的SQL查询
                     converted_gen_sql = convert_sql_to_sqlite(gen_sql)
                     logger.debug(
                         f"Executing generated SQL: {converted_gen_sql[:200]}...")
@@ -1017,32 +1237,39 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                         logger.debug(
                             f"First row of generated result: {gen_result[0]}")
 
+                    # 计算基础奖励分数
                     base_reward = 0.3 * REWARD_WEIGHTS["sql_correctness"]
                     reward = base_reward
 
+                    # 将结果转换为集合以便比较
                     gold_rows = set(tuple(row) for row in gold_result)
                     gen_rows = set(tuple(row) for row in gen_result)
 
+                    # 比较结果集和列名
                     if gold_rows == gen_rows and gold_columns == gen_columns:
                         reward = REWARD_WEIGHTS["sql_correctness"]
                         logger.debug(f"Results and columns match exactly!")
                     elif gold_rows and gen_rows:
                         if gold_columns == gen_columns:
+                            # 计算结果集的相似度（Jaccard系数）
                             intersection = len(
                                 gold_rows.intersection(gen_rows))
                             union = len(gold_rows.union(gen_rows))
                             jaccard = intersection / union if union > 0 else 0
                         else:
+                            # 处理列名不完全匹配的情况
                             gold_cols_lower = [c.lower() for c in gold_columns]
                             gen_cols_lower = [c.lower() for c in gen_columns]
                             common_columns_indices = []
 
+                            # 找出共同的列
                             for i, gold_col in enumerate(gold_cols_lower):
                                 if gold_col in gen_cols_lower:
                                     j = gen_cols_lower.index(gold_col)
                                     common_columns_indices.append((i, j))
 
                             if common_columns_indices:
+                                # 只比较共同列的数据
                                 gold_projected = [{i: row[i] for i, _ in common_columns_indices}
                                                   for row in gold_result]
                                 gen_projected = [{j: row[j] for _, j in common_columns_indices}
@@ -1065,9 +1292,11 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                             else:
                                 jaccard = 0.0
 
+                        # 计算行数比例
                         row_count_ratio = min(len(gen_rows), len(gold_rows)) / max(
                             len(gen_rows), len(gold_rows)) if max(len(gen_rows), len(gold_rows)) > 0 else 0
 
+                        # 计算列相似度
                         col_similarity = 0.0
                         if gold_columns and gen_columns:
                             gold_cols_set = set(c.lower()
@@ -1078,16 +1307,19 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                             col_union = len(gold_cols_set.union(gen_cols_set))
                             col_similarity = col_intersection / col_union if col_union > 0 else 0
 
+                        # 计算数据准确性
                         data_accuracy = len(gold_rows.intersection(
                             gen_rows)) / len(gold_rows) if gold_rows else 0
 
+                        # 计算内容相似度得分
                         content_similarity = (
-                            0.40 * jaccard +
-                            0.20 * row_count_ratio +
-                            0.25 * col_similarity +
-                            0.15 * data_accuracy
+                            0.40 * jaccard +          # Jaccard系数权重
+                            0.20 * row_count_ratio +  # 行数比例权重
+                            0.25 * col_similarity +   # 列相似度权重
+                            0.15 * data_accuracy      # 数据准确性权重
                         )
 
+                        # 计算最终奖励分数
                         reward = REWARD_WEIGHTS["sql_correctness"] * \
                             content_similarity
 
@@ -1096,9 +1328,11 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                                          f"col_sim={col_similarity:.3f}, data_acc={data_accuracy:.3f}, " +
                                          f"content_sim={content_similarity:.3f}, final_reward={reward:.3f}")
 
+                        # 如果有部分匹配但得分过低，给予最低奖励
                         if intersection > 0 and reward < 0.3 * REWARD_WEIGHTS["sql_correctness"]:
                             reward = 0.3 * REWARD_WEIGHTS["sql_correctness"]
 
+                    # 如果查询能执行但结果不匹配，给予最低奖励
                     if reward <= base_reward and gen_result is not None:
                         reward = max(
                             reward, 0.2 * REWARD_WEIGHTS["sql_correctness"])
@@ -1121,10 +1355,12 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
 
             elif gen_type in ["INSERT", "UPDATE", "DELETE"]:
                 try:
+                    # 检查DML语句中的JOIN
                     if "JOIN" in gen_sql.upper() and gen_type != "SELECT":
                         logger.warning(
                             f"JOIN detected in {gen_type} statement - may cause issues")
 
+                        # 提取主表名
                         if gen_type == "INSERT":
                             table_match = re.search(
                                 r'INSERT\s+INTO\s+([^\s(]+)', gen_sql, re.IGNORECASE)
@@ -1147,11 +1383,13 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                                 logger.debug(
                                     f"Main table for DELETE: {main_table}")
 
+                        # 验证主表是否存在
                         if 'main_table' in locals():
                             exists = check_table_exists(conn, main_table)
                             logger.debug(
                                 f"Main table '{main_table}' exists: {exists}")
 
+                    # 修复大小写敏感性问题
                     gen_sql_fixed = fix_case_sensitivity_in_sql(conn, gen_sql)
 
                     if gen_sql_fixed != gen_sql:
@@ -1159,6 +1397,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                             f"Fixed case sensitivity issues in DML statement")
                         gen_sql = gen_sql_fixed
 
+                    # 执行DML语句
                     converted_gen_sql = convert_sql_to_sqlite(gen_sql)
                     logger.debug(
                         f"Executing DML statement: {converted_gen_sql[:200]}...")
@@ -1172,6 +1411,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                         f"Error executing DML statement: {error_msg}")
                     logger.warning(f"Generated SQL: {gen_sql[:200]}...")
 
+                    # 处理表不存在的错误
                     if "no such table" in error_msg.lower():
                         table_match = re.search(
                             r"no such table: (\w+)", error_msg, re.IGNORECASE)
@@ -1179,6 +1419,7 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
                             missing_table = table_match.group(1)
                             logger.debug(f"Missing table: {missing_table}")
 
+                            # 检查是否是大小写问题
                             all_tables = list_all_tables(conn)
                             logger.debug(f"Available tables: {all_tables}")
 
@@ -1240,6 +1481,10 @@ def execute_query_reward_func(prompts, completions, references, **kwargs) -> lis
 
 
 if __name__ == "__main__":
+    """
+    主函数：用于演示和测试各种奖励函数的使用
+    """
+    # 启用调试模式
     DEBUG_MODE = True
     log_level = logging.DEBUG
     logging.getLogger().setLevel(log_level)
@@ -1247,6 +1492,7 @@ if __name__ == "__main__":
         handler.setLevel(log_level)
     logger.info("Running example usage...")
 
+    # 示例数据
     prompts_example = ["Show names of dogs older than 5 years."]
     completions_example = [
         "<reasoning>Find dogs table. Filter by age > 5. Select name column.</reasoning>\n<sql>SELECT name FROM dogs WHERE age > 5;</sql>"
@@ -1262,26 +1508,29 @@ if __name__ == "__main__":
         "question": prompts_example[0]
     }]]
 
+    # 测试执行查询奖励函数（不考虑顺序）
     print("\n--- Testing execute_query_reward_func (Order Ignored) ---")
     exec_rewards_order_ignored = execute_query_reward_func(
         prompts_example, completions_example, references_example,
-        source_dialect_dataset="mysql",
-        source_dialect_generated="postgresql",
-        order_matters=False,
-        validate_schema=True
+        source_dialect_dataset="mysql",      # 数据集SQL方言
+        source_dialect_generated="postgresql", # 生成的SQL方言
+        order_matters=False,                  # 不考虑结果顺序
+        validate_schema=True                  # 验证模式
     )
     print(f"Execution Rewards (Order Ignored): {exec_rewards_order_ignored}")
 
+    # 测试执行查询奖励函数（考虑顺序）
     print("\n--- Testing execute_query_reward_func (Order Matters) ---")
     exec_rewards_order_matters = execute_query_reward_func(
         prompts_example, completions_example, references_example,
         source_dialect_dataset="mysql",
         source_dialect_generated="postgresql",
-        order_matters=True,
+        order_matters=True,                   # 考虑结果顺序
         validate_schema=True
     )
     print(f"Execution Rewards (Order Matters): {exec_rewards_order_matters}")
 
+    # 测试格式奖励函数
     print("\n--- Testing Format Rewards ---")
     strict_format_rewards = strict_format_reward_func(
         prompts_example, completions_example)
@@ -1290,11 +1539,13 @@ if __name__ == "__main__":
     print(f"Strict Format Rewards: {strict_format_rewards}")
     print(f"Soft Format Rewards: {soft_format_rewards}")
 
+    # 测试复杂度奖励函数
     print("\n--- Testing Complexity Reward ---")
     complexity_rewards = complexity_reward(
         prompts_example, completions_example, references_example)
     print(f"Complexity Rewards: {complexity_rewards}")
 
+    # 测试推理质量奖励函数
     print("\n--- Testing Reasoning Quality Reward ---")
     reasoning_rewards = reasoning_quality_reward(
         prompts_example, completions_example, references_example)
